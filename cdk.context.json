@@ -1,0 +1,10 @@
+{
+  "hosted-zone:account=239912451711:domainName=doctorus.io:region=eu-west-1": {
+    "Id": "/hostedzone/Z0214844349OVKDSEKRIO",
+    "Name": "doctorus.io."
+  },
+  "hosted-zone:account=239912451711:domainName=staging.doctorus.io:region=eu-west-1": {
+    "Id": "/hostedzone/Z03203623N5DLJEXM7GZL",
+    "Name": "staging.doctorus.io."
+  }
+}

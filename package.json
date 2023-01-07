@@ -9,21 +9,24 @@
     "build": "tsc",
     "watch": "tsc -w",
     "test": "jest",
-    "cdk": "cdk"
+    "cdk": "cdk",
+    "cdk-synth-staging": "cdk synth -c config=staging",
+    "cdk-synth-prod": "cdk synth -c config=prod",
+    "cdk-destroy-staging": "cdk destroy --all -c config=staging  --profile doctorus",
+    "cdk-destroy-prod": "cdk destroy --all -c config=prod  --profile doctorus",
+    "cdk-bootstrap-staging": "cdk bootstrap -c config=staging --profile doctorus",
+    "cdk-bootstrap-prod": "cdk bootstrap -c config=prod --profile doctorus",
+    "cdk-diff-staging": "tsc --clean && cdk diff \"*\" -c config=staging",
+    "cdk-diff-prod": "tsc --clean && cdk diff \"*\" -c config=prod",
+    "cdk-deploy-staging": "tsc --build --clean && cdk deploy \"*\" -c config=staging --require-approval=never --progress=events  --profile doctorus",
+    "cdk-deploy-prod": "tsc --build --clean && cdk deploy \"*\" -c config=prod --progress=events  --profile doctorus"
   },
   "devDependencies": {
-    "@types/jest": "^27.5.0",
-    "@types/node": "10.17.27",
-    "@types/prettier": "2.6.0",
-    "jest": "^27.5.1",
-    "ts-jest": "^27.1.4",
-    "aws-cdk": "2.24.1",
-    "ts-node": "^10.9.1",
-    "typescript": "~4.9.3"
+    "@types/jest": "^29.2.4",
+    "@types/node": "18.11.11",
+    "ts-jest": "^29.0.3",
+    "ts-node": "^10.9.1"
   },
   "dependencies": {
-    "aws-cdk-lib": "2.24.1",
-    "constructs": "^10.0.0",
-    "source-map-support": "^0.5.21"
   }
 }
