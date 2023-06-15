@@ -1,0 +1,29 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters: 
+  Env: 
+    Description: Enviroment
+    AllowedValues:
+      - "staging"
+      - "prod"
+    Type: String
+Resources:
+  TransformedImageBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties: 
+      AccessControl: Private
+      BucketName: !Sub
+        - '${Env}-transformed-medical-images'
+        - Env: !Ref Env
+      LifecycleConfiguration: 
+        Rules: 
+          - Id : RetensionRule
+            Status : Enabled
+            ExpirationInDays : 10
+
+Outputs:
+  TransformedImageBucketOuput:
+    Description: Bucket ARN
+    Value: !GetAtt TransformedImageBucket.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-bucket-arn"

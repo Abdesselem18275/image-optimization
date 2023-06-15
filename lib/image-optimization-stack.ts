@@ -71,7 +71,6 @@ export class ImageOptimizationStack extends Stack {
     });  
 
     // create bucket for transformed images if enabled in the architecture
-    if (STORE_TRANSFORMED_IMAGES) {
       transformedImageBucket = new s3.Bucket(this, 's3-transformed-image-bucket', {
         removalPolicy: RemovalPolicy.DESTROY,
         autoDeleteObjects: true, 
@@ -81,7 +80,6 @@ export class ImageOptimizationStack extends Stack {
             },
           ],
       });
-    }
 
     // prepare env variable for Lambda 
     var lambdaEnv: LambdaEnv = {
@@ -126,7 +124,6 @@ export class ImageOptimizationStack extends Stack {
     // Create a CloudFront origin: S3 with fallback to Lambda when image needs to be transformed, otherwise with Lambda as sole origin
     var imageOrigin;
 
-    if (transformedImageBucket) {
       imageOrigin = new origins.OriginGroup ({
         primaryOrigin: new origins.S3Origin(transformedImageBucket, {
           originShieldRegion: CLOUDFRONT_ORIGIN_SHIELD_REGION,
@@ -146,15 +143,6 @@ export class ImageOptimizationStack extends Stack {
         resources: ['arn:aws:s3:::'+transformedImageBucket.bucketName+'/*'],
       });
       iamPolicyStatements.push(s3WriteTransformedImagesPolicy);
-    } else {
-      console.log("else transformedImageBucket");
-      imageOrigin = new origins.HttpOrigin(imageProcessingHelper.hostname, {
-        originShieldRegion: CLOUDFRONT_ORIGIN_SHIELD_REGION,
-        customHeaders: {
-          'x-origin-secret-header': SECRET_KEY,
-        },
-      });
-    }
 
     // attach iam policy to the role assumed by Lambda
     imageProcessing.role?.attachInlinePolicy(
@@ -189,10 +177,46 @@ export class ImageOptimizationStack extends Stack {
         function: urlRewriteFunction,
       }],
     }
+    const oai = new cloudfront.OriginAccessIdentity(this ,'MedicalDocumentOai')
+    const originalImageBucketOrigin = new origins.S3Origin(originalImageBucket,{
+      originAccessIdentity : oai
+
+    })
+    const policyStatement = new iam.PolicyStatement({
+      actions:    [ 's3:GetObject' ],
+      resources:  [ originalImageBucket.arnForObjects("*") ],
+      principals: [ oai.grantPrincipal ],
+    });
+    
+    const bucketPolicy = new s3.BucketPolicy(this, 'cloudfrontAccessBucketPolicy', {
+      bucket: originalImageBucket,
+    })
+    bucketPolicy.document.addStatements(policyStatement);
+
+    var documentDeliveryCacheBehaviorConfig:BehaviorOptions  = {
+      origin: originalImageBucketOrigin,
+      compress : false,
+      responseHeadersPolicy : cdk.aws_cloudfront.ResponseHeadersPolicy.CORS_ALLOW_ALL_ORIGINS_WITH_PREFLIGHT_AND_SECURITY_HEADERS,
+      originRequestPolicy : cdk.aws_cloudfront.OriginRequestPolicy.CORS_S3_ORIGIN,
+      allowedMethods : cdk.aws_cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
+      viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+      
+      // cachePolicy: new cloudfront.CachePolicy(this, `ImageCachePolicy${this.node.addr}`, {
+      //   defaultTtl: Duration.hours(24),
+      //   maxTtl: Duration.days(365),
+      //   minTtl: Duration.seconds(0),
+      //   queryStringBehavior: cloudfront.CacheQueryStringBehavior.all()
+      // }),
+      cachePolicy:cloudfront.CachePolicy.CACHING_OPTIMIZED_FOR_UNCOMPRESSED_OBJECTS,
+      cachedMethods : cdk.aws_cloudfront.CachedMethods.CACHE_GET_HEAD_OPTIONS,
+      trustedKeyGroups: [
+        keyGroup,
+      ],
+    }
 
     if (CLOUDFRONT_CORS_ENABLED) {
       // Creating a custom response headers policy. CORS allowed for all origins.
-      const imageResponseHeadersPolicy = new cloudfront.ResponseHeadersPolicy(this, `ResponseHeadersPolicy${this.node.addr}`, {
+      const imageResponseHeadersPolicy = new cloudfront.ResponseHeadersPolicy(this, `ImageResponseHeadersPolicy${this.node.addr}`, {
         responseHeadersPolicyName: `${buildConfig.stage}ImageResponsePolicy`,
         corsBehavior: {
           accessControlAllowCredentials: false,
@@ -210,15 +234,29 @@ export class ImageOptimizationStack extends Stack {
           ],
         }
       });  
+      const documentResponseHeadersPolicy = new cloudfront.ResponseHeadersPolicy(this, `DocumentResponseHeadersPolicy${this.node.addr}`, {
+        responseHeadersPolicyName: `${buildConfig.stage}DocumentResponsePolicy`,
+        corsBehavior: {
+          accessControlAllowCredentials: false,
+          accessControlAllowHeaders: ['*'],
+          accessControlAllowMethods: ['GET'],
+          accessControlAllowOrigins: ['*'],
+          accessControlMaxAge: Duration.seconds(600),
+          originOverride: false,
+        } });
       imageDeliveryCacheBehaviorConfig = {
         ...imageDeliveryCacheBehaviorConfig,
         responseHeadersPolicy : imageResponseHeadersPolicy
       }
+      documentDeliveryCacheBehaviorConfig = {
+        ...documentDeliveryCacheBehaviorConfig,
+        responseHeadersPolicy : documentResponseHeadersPolicy
+      }
     }
     const domainName = `media.${buildConfig.baseHost}`
 
-    const imageDelivery = new cloudfront.Distribution(this, 'imageDeliveryDistribution', {
-      comment: 'image optimization - image delivery',
+    const documentDelivery = new cloudfront.Distribution(this, 'DocumentDeliveryDistribution', {
+      comment: 'medical document delivery with optimization of image',
       domainNames :[domainName],
       certificate :  cdk.aws_certificatemanager.Certificate.fromCertificateArn(this,"Certificate",cdk.aws_ssm.StringParameter.fromStringParameterAttributes(this, 'certificate', {
         parameterName: ssmParamKey(buildConfig.stage,ssmParamsSuffix.cfCertArn),
@@ -226,6 +264,11 @@ export class ImageOptimizationStack extends Stack {
       }).stringValue),
       defaultBehavior: imageDeliveryCacheBehaviorConfig
     });
+
+    documentDelivery.addBehavior('/medical-documents/*',originalImageBucketOrigin,documentDeliveryCacheBehaviorConfig)
+
+
+    
 
     const hostedZone = cdk.aws_route53.HostedZone.fromLookup(this, 'HostedZone', {
       domainName: buildConfig.baseHost
@@ -236,7 +279,7 @@ export class ImageOptimizationStack extends Stack {
       recordName: domainName,
       deleteExisting: true,
       target: cdk.aws_route53.RecordTarget.fromAlias(
-        new cdk.aws_route53_targets.CloudFrontTarget(imageDelivery)
+        new cdk.aws_route53_targets.CloudFrontTarget(documentDelivery)
       ),
     });
     new cdk.aws_route53.AaaaRecord(this, "AliasRecordAAAA", {
@@ -244,13 +287,13 @@ export class ImageOptimizationStack extends Stack {
       recordName: domainName,
       deleteExisting: true,
       target: cdk.aws_route53.RecordTarget.fromAlias(
-        new cdk.aws_route53_targets.CloudFrontTarget(imageDelivery)
+        new cdk.aws_route53_targets.CloudFrontTarget(documentDelivery)
       ),
     });
 
     new CfnOutput(this, 'ImageDeliveryDomain', {
       description: 'Domain name of image delivery',
-      value: imageDelivery.distributionDomainName
+      value: documentDelivery.distributionDomainName
     });
   }
 }

@@ -1,0 +1,22 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Resources:
+  MedicalDocumentDist:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        OriginGroups:
+          Items:
+            -Id : 
+            Memebers:
+              Items:
+              
+          Quantity : 1
+          
+        DefaultCacheBehavior: 
+        IPV6Enabled: true | false
+        Origins:
+          - 
+            origin
+      Tags:
+        - Key: key
+          Value: value

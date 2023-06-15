@@ -36,6 +36,20 @@ exports.handler = async (event) => {
   try {
     originalImage = await S3.getObject({ Bucket: S3_ORIGINAL_IMAGE_BUCKET, Key: originalImagePath }).promise()
     contentType = originalImage.ContentType
+    // /* check if the object is an image !! this is a temporary walkaround it's aim to handle non image files.
+    //   We must consider setting up a dedicated dist for non image files
+    // */
+    // if (contentType.split('/')[0] !== 'image') {
+    //   return {
+    //     statusCode: 200,
+    //     body: originalImage.toString('base64'),
+    //     isBase64Encoded: true,
+    //     headers: {
+    //       'Content-Type': contentType,
+    //       'Cache-Control': TRANSFORMED_IMAGE_CACHE_TTL
+    //     }
+    //   }
+    // }
   } catch (error) {
     return sendError(500, 'error downloading original image', error)
   }
