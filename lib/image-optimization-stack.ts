@@ -1,88 +1,90 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: MIT-0
-import * as cdk from 'aws-cdk-lib'
-import { Stack, StackProps, RemovalPolicy, aws_s3 as s3, aws_s3_deployment as s3deploy, aws_cloudfront as cloudfront, aws_cloudfront_origins as origins, aws_lambda as lambda, aws_iam as iam, Duration, CfnOutput, aws_logs as logs} from 'aws-cdk-lib';
-import { Construct } from 'constructs';
-import { MyCustomResource } from './my-custom-resource';
-import { createHash, generateKeyPairSync } from 'node:crypto';
-import { BuildConfig } from './build-config';
+import * as cdk from 'aws-cdk-lib';
+import { CfnOutput, Duration, RemovalPolicy, Stack, StackProps, aws_cloudfront as cloudfront, aws_iam as iam, aws_lambda as lambda, aws_logs as logs, aws_cloudfront_origins as origins, aws_s3 as s3 } from 'aws-cdk-lib';
 import { BehaviorOptions } from 'aws-cdk-lib/aws-cloudfront';
-import { ssmParamKey, ssmParamVal, ssmParamsSuffix } from '../../globals/ssm-keys'
+import { Construct } from 'constructs';
+import { createHash } from 'node:crypto';
+import { MyCustomResource } from './my-custom-resource';
 
 // Region to Origin Shield mapping based on latency. to be updated when new Regional Edge Caches are added to CloudFront.
-const ORIGIN_SHIELD_MAPPING = new Map([['af-south-1', 'eu-west-2'], [ 'ap-east-1' ,'ap-northeast-2'], [ 'ap-northeast-1', 'ap-northeast-1'], [
-  'ap-northeast-2', 'ap-northeast-2'], [ 'ap-northeast-3', 'ap-northeast-1'], [ 'ap-south-1', 'ap-south-1'], [ 'ap-southeast-1','ap-southeast-1'], [ 
-  'ap-southeast-2', 'ap-southeast-2'], [ 'ca-central-1', 'us-east-1'], [ 'eu-central-1', 'eu-central-1'], [ 'eu-north-1','eu-central-1'], [
-  'eu-south-1','eu-central-1'], [ 'eu-west-1', 'eu-west-1'], [ 'eu-west-2', 'eu-west-2'], [ 'eu-west-3', 'eu-west-2'], [ 'me-south-1', 'ap-south-1'], [
-  'sa-east-1', 'sa-east-1'], [ 'us-east-1', 'us-east-1'], [ 'us-east-2','us-east-2'], [ 'us-west-1', 'us-west-1'], [ 'us-west-2', 'us-west-2']] );
+const ORIGIN_SHIELD_MAPPING = new Map([['af-south-1', 'eu-west-2'], ['ap-east-1', 'ap-northeast-2'], ['ap-northeast-1', 'ap-northeast-1'], [
+  'ap-northeast-2', 'ap-northeast-2'], ['ap-northeast-3', 'ap-northeast-1'], ['ap-south-1', 'ap-south-1'], ['ap-southeast-1', 'ap-southeast-1'], [
+  'ap-southeast-2', 'ap-southeast-2'], ['ca-central-1', 'us-east-1'], ['eu-central-1', 'eu-central-1'], ['eu-north-1', 'eu-central-1'], [
+  'eu-south-1', 'eu-central-1'], ['eu-west-1', 'eu-west-1'], ['eu-west-2', 'eu-west-2'], ['eu-west-3', 'eu-west-2'], ['me-south-1', 'ap-south-1'], [
+  'sa-east-1', 'sa-east-1'], ['us-east-1', 'us-east-1'], ['us-east-2', 'us-east-2'], ['us-west-1', 'us-west-1'], ['us-west-2', 'us-west-2']]);
 
 // Stack Parameters
 
 // CloudFront parameters
 // Parameters of transformed images
 // Lambda Parameters
-var LAMBDA_MEMORY = '1500';
-var LAMBDA_TIMEOUT = '60';
-var LOG_TIMING = 'false';
+let LAMBDA_MEMORY = '1500';
+let LAMBDA_TIMEOUT = '60';
+let LOG_TIMING = 'false';
 
-type ImageDeliveryCacheBehaviorConfig = {
-  origin: any;
-  viewerProtocolPolicy: any;
-  cachePolicy: any;
-  functionAssociations: any;
-  responseHeadersPolicy?:any;
-};
 
 type LambdaEnv = {
   originalImageBucketName: string,
-  transformedImageBucketName?:any;
+  transformedImageBucketName?: any;
   transformedImageCacheTTL: string,
   secretKey: string,
   logTiming: string,
 }
 
+interface ImageOptimizationProps extends StackProps {
+  readonly optimizedImageExpDur: number
+  readonly optimizedCacheTtl: string
+  readonly awsAccountId: number
+  // readonly awsProfileRegion: string
+  readonly storeTransformedImages: boolean
+  readonly keyGroupId: string
+  readonly baseHost: string
+  readonly certificate: cdk.aws_certificatemanager.ICertificate
+  readonly domainName: string
+  readonly stage: "prod" | "staging"
+}
+
 export class ImageOptimizationStack extends Stack {
-  constructor(scope: Construct, id: string,buildConfig : BuildConfig, props?: StackProps) {
+  constructor(scope: Construct, id: string, props: ImageOptimizationProps) {
     super(scope, id, props);
 
     // Change stack parameters based on provided context
     // related to architecture. If set to false, transformed images are not stored in S3, and all image requests land on Lambda
-    const STORE_TRANSFORMED_IMAGES = buildConfig.storeTransformedImages
-    const S3_TRANSFORMED_IMAGE_EXPIRATION_DURATION = buildConfig.optimizedImageExpDur
-    const S3_TRANSFORMED_IMAGE_CACHE_TTL = buildConfig.optimizedCacheTtl
-    const S3_IMAGE_BUCKET_NAME = `${buildConfig.stage}-doctorus-media`
-    const CLOUDFRONT_ORIGIN_SHIELD_REGION = ORIGIN_SHIELD_MAPPING.get(buildConfig.awsProfileRegion  ?? (process.env.AWS_REGION || process.env.CDK_DEFAULT_REGION));
+    const S3_TRANSFORMED_IMAGE_EXPIRATION_DURATION = props.optimizedImageExpDur
+    const S3_TRANSFORMED_IMAGE_CACHE_TTL = props.optimizedCacheTtl
+    const S3_IMAGE_BUCKET_NAME = `${props.stage}-doctorus-media`
+    const CLOUDFRONT_ORIGIN_SHIELD_REGION = ORIGIN_SHIELD_MAPPING.get((props.env?.region as string) ?? (process.env.AWS_REGION || process.env.CDK_DEFAULT_REGION));
     const CLOUDFRONT_CORS_ENABLED = true
     LAMBDA_MEMORY = this.node.tryGetContext('LAMBDA_MEMORY') || LAMBDA_MEMORY;
     LAMBDA_TIMEOUT = this.node.tryGetContext('LAMBDA_TIMEOUT') || LAMBDA_TIMEOUT;
     LOG_TIMING = this.node.tryGetContext('LOG_TIMING') || LOG_TIMING;
 
     // Create secret key to be used between CloudFront and Lambda URL for access control
-    const SECRET_KEY = createHash('md5').update(this.node.addr).digest('hex') ;
+    const SECRET_KEY = createHash('md5').update(this.node.addr).digest('hex');
 
     // For the bucket having original images, either use an external one, or create one with some samples photos.
-    var originalImageBucket;
-    var transformedImageBucket;
 
-    originalImageBucket = s3.Bucket.fromBucketName(this,'imported-original-image-bucket', S3_IMAGE_BUCKET_NAME);
+    const originalImageBucket = s3.Bucket.fromBucketName(this, 'imported-original-image-bucket', S3_IMAGE_BUCKET_NAME);
     new CfnOutput(this, 'OriginalImagesS3Bucket', {
       description: 'S3 bucket where original images are stored',
       value: originalImageBucket.bucketName
-    });  
+    });
 
     // create bucket for transformed images if enabled in the architecture
-      transformedImageBucket = new s3.Bucket(this, 's3-transformed-image-bucket', {
-        removalPolicy: RemovalPolicy.DESTROY,
-        autoDeleteObjects: true, 
-        lifecycleRules: [
-            {
-              expiration: Duration.days(S3_TRANSFORMED_IMAGE_EXPIRATION_DURATION),
-            },
-          ],
-      });
+    const transformedImageBucket = new s3.Bucket(this, 's3-transformed-image-bucket', {
+      removalPolicy: RemovalPolicy.DESTROY,
+      autoDeleteObjects: true,
+      blockPublicAccess: cdk.aws_s3.BlockPublicAccess.BLOCK_ACLS,
+      lifecycleRules: [
+        {
+          expiration: Duration.days(S3_TRANSFORMED_IMAGE_EXPIRATION_DURATION),
+        },
+      ],
+    });
 
     // prepare env variable for Lambda 
-    var lambdaEnv: LambdaEnv = {
+    const lambdaEnv: LambdaEnv = {
       originalImageBucketName: originalImageBucket.bucketName,
       transformedImageCacheTTL: S3_TRANSFORMED_IMAGE_CACHE_TTL,
       secretKey: SECRET_KEY,
@@ -93,23 +95,23 @@ export class ImageOptimizationStack extends Stack {
     // IAM policy to read from the S3 bucket containing the original images
     const s3ReadOriginalImagesPolicy = new iam.PolicyStatement({
       actions: ['s3:GetObject'],
-      resources: ['arn:aws:s3:::'+originalImageBucket.bucketName+'/*'],
+      resources: ['arn:aws:s3:::' + originalImageBucket.bucketName + '/*'],
     });
 
     // statements of the IAM policy to attach to Lambda
-    var iamPolicyStatements = [s3ReadOriginalImagesPolicy];
+    const iamPolicyStatements = [s3ReadOriginalImagesPolicy];
 
     // Create Lambda for image processing
-    var lambdaProps = {
-      runtime: lambda.Runtime.NODEJS_16_X, 
+    const imageProcessing = new lambda.Function(this, 'image-optimization', {
+      runtime: lambda.Runtime.NODEJS_16_X,
       handler: 'index.handler',
+      // functionName: props.stage + 'medical-images-optimisation',
       code: lambda.Code.fromAsset('functions/image-processing'),
       timeout: Duration.seconds(parseInt(LAMBDA_TIMEOUT)),
       memorySize: parseInt(LAMBDA_MEMORY),
       environment: lambdaEnv,
       logRetention: logs.RetentionDays.ONE_DAY,
-    };
-    var imageProcessing = new lambda.Function(this, 'image-optimization', lambdaProps);
+    });
 
     // Enable Lambda URL
     const imageProcessingURL = imageProcessing.addFunctionUrl({
@@ -122,27 +124,26 @@ export class ImageOptimizationStack extends Stack {
     });
 
     // Create a CloudFront origin: S3 with fallback to Lambda when image needs to be transformed, otherwise with Lambda as sole origin
-    var imageOrigin;
 
-      imageOrigin = new origins.OriginGroup ({
-        primaryOrigin: new origins.S3Origin(transformedImageBucket, {
-          originShieldRegion: CLOUDFRONT_ORIGIN_SHIELD_REGION,
-        }),
-        fallbackOrigin: new origins.HttpOrigin(imageProcessingHelper.hostname, {
-          originShieldRegion: CLOUDFRONT_ORIGIN_SHIELD_REGION,
-          customHeaders: {
-            'x-origin-secret-header': SECRET_KEY,
-          },
-        }), 
-        fallbackStatusCodes: [403],
-      });
+    const imageOrigin = new origins.OriginGroup({
+      primaryOrigin: new origins.S3Origin(transformedImageBucket, {
+        originShieldRegion: CLOUDFRONT_ORIGIN_SHIELD_REGION,
+      }),
+      fallbackOrigin: new origins.HttpOrigin(imageProcessingHelper.hostname, {
+        originShieldRegion: CLOUDFRONT_ORIGIN_SHIELD_REGION,
+        customHeaders: {
+          'x-origin-secret-header': SECRET_KEY,
+        },
+      }),
+      fallbackStatusCodes: [403],
+    });
 
-      // write policy for Lambda on the s3 bucket for transformed images
-      var s3WriteTransformedImagesPolicy = new iam.PolicyStatement({
-        actions: ['s3:PutObject'],
-        resources: ['arn:aws:s3:::'+transformedImageBucket.bucketName+'/*'],
-      });
-      iamPolicyStatements.push(s3WriteTransformedImagesPolicy);
+    // write policy for Lambda on the s3 bucket for transformed images
+    const s3WriteTransformedImagesPolicy = new iam.PolicyStatement({
+      actions: ['s3:PutObject'],
+      resources: ['arn:aws:s3:::' + transformedImageBucket.bucketName + '/*'],
+    });
+    iamPolicyStatements.push(s3WriteTransformedImagesPolicy);
 
     // attach iam policy to the role assumed by Lambda
     imageProcessing.role?.attachInlinePolicy(
@@ -153,13 +154,13 @@ export class ImageOptimizationStack extends Stack {
 
     // Create a CloudFront Function for url rewrites
     const urlRewriteFunction = new cloudfront.Function(this, 'urlRewrite', {
-      code: cloudfront.FunctionCode.fromFile({filePath: 'functions/url-rewrite/index.js',}),
-      functionName: `urlRewriteFunction${this.node.addr}`, 
+      code: cloudfront.FunctionCode.fromFile({ filePath: 'functions/url-rewrite/index.js', }),
+      functionName: `urlRewriteFunction${this.node.addr}`,
     });
-    
-    const keyGroup = cloudfront.KeyGroup.fromKeyGroupId(this, 'MyKeyGroup',buildConfig.keyGroupId)
 
-    var imageDeliveryCacheBehaviorConfig:BehaviorOptions  = {
+    const keyGroup = cloudfront.KeyGroup.fromKeyGroupId(this, 'MyKeyGroup', props.keyGroupId)
+
+    let imageDeliveryCacheBehaviorConfig: BehaviorOptions = {
       origin: imageOrigin,
       viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
       cachePolicy: new cloudfront.CachePolicy(this, `ImageCachePolicy${this.node.addr}`, {
@@ -168,7 +169,7 @@ export class ImageOptimizationStack extends Stack {
         minTtl: Duration.seconds(0),
         queryStringBehavior: cloudfront.CacheQueryStringBehavior.all()
       }),
-      
+
       trustedKeyGroups: [
         keyGroup,
       ],
@@ -177,38 +178,38 @@ export class ImageOptimizationStack extends Stack {
         function: urlRewriteFunction,
       }],
     }
-    const oai = new cloudfront.OriginAccessIdentity(this ,'MedicalDocumentOai')
-    const originalImageBucketOrigin = new origins.S3Origin(originalImageBucket,{
-      originAccessIdentity : oai
+    const oai = new cloudfront.OriginAccessIdentity(this, 'MedicalDocumentOai')
+    const originalImageBucketOrigin = new origins.S3Origin(originalImageBucket, {
+      originAccessIdentity: oai
 
     })
     const policyStatement = new iam.PolicyStatement({
-      actions:    [ 's3:GetObject' ],
-      resources:  [ originalImageBucket.arnForObjects("*") ],
-      principals: [ oai.grantPrincipal ],
+      actions: ['s3:GetObject'],
+      resources: [originalImageBucket.arnForObjects("*")],
+      principals: [oai.grantPrincipal],
     });
-    
+
     const bucketPolicy = new s3.BucketPolicy(this, 'cloudfrontAccessBucketPolicy', {
       bucket: originalImageBucket,
     })
     bucketPolicy.document.addStatements(policyStatement);
 
-    var documentDeliveryCacheBehaviorConfig:BehaviorOptions  = {
+    let documentDeliveryCacheBehaviorConfig: BehaviorOptions = {
       origin: originalImageBucketOrigin,
-      compress : false,
-      responseHeadersPolicy : cdk.aws_cloudfront.ResponseHeadersPolicy.CORS_ALLOW_ALL_ORIGINS_WITH_PREFLIGHT_AND_SECURITY_HEADERS,
-      originRequestPolicy : cdk.aws_cloudfront.OriginRequestPolicy.CORS_S3_ORIGIN,
-      allowedMethods : cdk.aws_cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
+      compress: false,
+      responseHeadersPolicy: cdk.aws_cloudfront.ResponseHeadersPolicy.CORS_ALLOW_ALL_ORIGINS_WITH_PREFLIGHT_AND_SECURITY_HEADERS,
+      originRequestPolicy: cdk.aws_cloudfront.OriginRequestPolicy.CORS_S3_ORIGIN,
+      allowedMethods: cdk.aws_cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
       viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-      
+
       // cachePolicy: new cloudfront.CachePolicy(this, `ImageCachePolicy${this.node.addr}`, {
       //   defaultTtl: Duration.hours(24),
       //   maxTtl: Duration.days(365),
       //   minTtl: Duration.seconds(0),
       //   queryStringBehavior: cloudfront.CacheQueryStringBehavior.all()
       // }),
-      cachePolicy:cloudfront.CachePolicy.CACHING_OPTIMIZED_FOR_UNCOMPRESSED_OBJECTS,
-      cachedMethods : cdk.aws_cloudfront.CachedMethods.CACHE_GET_HEAD_OPTIONS,
+      cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED_FOR_UNCOMPRESSED_OBJECTS,
+      cachedMethods: cdk.aws_cloudfront.CachedMethods.CACHE_GET_HEAD_OPTIONS,
       trustedKeyGroups: [
         keyGroup,
       ],
@@ -217,7 +218,7 @@ export class ImageOptimizationStack extends Stack {
     if (CLOUDFRONT_CORS_ENABLED) {
       // Creating a custom response headers policy. CORS allowed for all origins.
       const imageResponseHeadersPolicy = new cloudfront.ResponseHeadersPolicy(this, `ImageResponseHeadersPolicy${this.node.addr}`, {
-        responseHeadersPolicyName: `${buildConfig.stage}ImageResponsePolicy`,
+        responseHeadersPolicyName: `${props.stage}ImageResponsePolicy`,
         corsBehavior: {
           accessControlAllowCredentials: false,
           accessControlAllowHeaders: ['*'],
@@ -233,9 +234,9 @@ export class ImageOptimizationStack extends Stack {
             { header: 'vary', value: 'accept', override: true },
           ],
         }
-      });  
+      });
       const documentResponseHeadersPolicy = new cloudfront.ResponseHeadersPolicy(this, `DocumentResponseHeadersPolicy${this.node.addr}`, {
-        responseHeadersPolicyName: `${buildConfig.stage}DocumentResponsePolicy`,
+        responseHeadersPolicyName: `${props.stage}DocumentResponsePolicy`,
         corsBehavior: {
           accessControlAllowCredentials: false,
           accessControlAllowHeaders: ['*'],
@@ -243,40 +244,42 @@ export class ImageOptimizationStack extends Stack {
           accessControlAllowOrigins: ['*'],
           accessControlMaxAge: Duration.seconds(600),
           originOverride: false,
-        } });
+        }
+      });
       imageDeliveryCacheBehaviorConfig = {
         ...imageDeliveryCacheBehaviorConfig,
-        responseHeadersPolicy : imageResponseHeadersPolicy
+        responseHeadersPolicy: imageResponseHeadersPolicy
       }
       documentDeliveryCacheBehaviorConfig = {
         ...documentDeliveryCacheBehaviorConfig,
-        responseHeadersPolicy : documentResponseHeadersPolicy
+        responseHeadersPolicy: documentResponseHeadersPolicy
       }
     }
-    const domainName = `media.${buildConfig.baseHost}`
+    //const domainName = `media.${props.baseHost}`
 
     const documentDelivery = new cloudfront.Distribution(this, 'DocumentDeliveryDistribution', {
       comment: 'medical document delivery with optimization of image',
-      domainNames :[domainName],
-      certificate :  cdk.aws_certificatemanager.Certificate.fromCertificateArn(this,"Certificate",cdk.aws_ssm.StringParameter.fromStringParameterAttributes(this, 'certificate', {
-        parameterName: ssmParamKey(buildConfig.stage,ssmParamsSuffix.cfCertArn),
-        // 'version' can be specified but is optional.
-      }).stringValue),
+      domainNames: [props.domainName],
+      certificate: props.certificate,
+      // certificate: cdk.aws_certificatemanager.Certificate.fromCertificateArn(this, "Certificate", cdk.aws_ssm.StringParameter.fromStringParameterAttributes(this, 'certificate', {
+      //   parameterName: ssmParamKey(props.stage, ssmParamsSuffix.cfCertArn),
+      //   // 'version' can be specified but is optional.
+      // }).stringValue),
       defaultBehavior: imageDeliveryCacheBehaviorConfig
     });
 
-    documentDelivery.addBehavior('/medical-documents/*',originalImageBucketOrigin,documentDeliveryCacheBehaviorConfig)
+    documentDelivery.addBehavior('/medical-documents/*', originalImageBucketOrigin, documentDeliveryCacheBehaviorConfig)
 
 
-    
+
 
     const hostedZone = cdk.aws_route53.HostedZone.fromLookup(this, 'HostedZone', {
-      domainName: buildConfig.baseHost
+      domainName: props.baseHost
     })
-    
+
     new cdk.aws_route53.ARecord(this, "AliasRecordA", {
       zone: hostedZone,
-      recordName: domainName,
+      recordName: props.domainName,
       deleteExisting: true,
       target: cdk.aws_route53.RecordTarget.fromAlias(
         new cdk.aws_route53_targets.CloudFrontTarget(documentDelivery)
@@ -284,7 +287,7 @@ export class ImageOptimizationStack extends Stack {
     });
     new cdk.aws_route53.AaaaRecord(this, "AliasRecordAAAA", {
       zone: hostedZone,
-      recordName: domainName,
+      recordName: props.domainName,
       deleteExisting: true,
       target: cdk.aws_route53.RecordTarget.fromAlias(
         new cdk.aws_route53_targets.CloudFrontTarget(documentDelivery)

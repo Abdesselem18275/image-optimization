@@ -29,6 +29,9 @@
     "@aws-cdk/core:target-partitions": [
       "aws",
       "aws-cn"
-    ]
+    ],
+    "AWSAccountID": "239912451711",
+    "AWSProfileName": "doctorus-administrator",
+    "AWSProfileRegion": "eu-west-1"
   }
 }

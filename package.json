@@ -5,7 +5,8 @@
     "image-optimization": "bin/image-optimization.js"
   },
   "scripts": {
-    "prebuild": "npm install sharp --prefix functions/image-processing/ --platform=linux --arch=x64",
+    "precdk-deploy-staging": "npm install sharp --prefix functions/image-processing/ --platform=linux --arch=x64",
+    "precdk-deploy-prod": "npm install sharp --prefix functions/image-processing/ --platform=linux --arch=x64",
     "build": "tsc",
     "watch": "tsc -w",
     "test": "jest",
@@ -27,6 +28,5 @@
     "ts-jest": "^29.0.3",
     "ts-node": "^10.9.1"
   },
-  "dependencies": {
-  }
+  "dependencies": {}
 }
